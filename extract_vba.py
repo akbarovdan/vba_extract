@@ -1,11 +1,28 @@
 import os
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 from typing import Tuple
 from oletools.olevba import VBA_Parser
 
 OUTPUT_BASE_DIR: str = "output"
+
+
+def get_project_name(source: str) -> str:
+    """Извлекает чистое имя файла (без расширения) из пути или URL"""
+    if source.startswith(("http://", "https://")):
+        parsed_url = urllib.parse.urlparse(source)
+        base_name = os.path.basename(parsed_url.path)
+    else:
+        base_name = os.path.basename(source)
+
+    # Убираем расширение (.xlsm, .xlsb и т.д.)
+    name_without_ext = os.path.splitext(base_name)[0]
+    
+    # Очищаем от недопустимых символов для папок
+    clean_project_name = "".join(c for c in name_without_ext if c.isalnum() or c in " _-А-яЁё").strip()
+    return clean_project_name if clean_project_name else "extracted_project"
 
 
 def detect_module_type(filename: str, code: str) -> str:
@@ -63,7 +80,6 @@ def main() -> None:
         print("[-] Ошибка: путь или ссылка не указаны.")
         return
 
-    # Инициализируем переменные заранее для чистоты анализатора
     file_path: str = ""
     is_temp: bool = False
 
@@ -74,12 +90,17 @@ def main() -> None:
             print(f"[-] Ошибка: файл '{file_path}' не найден!")
             return
 
-        print(f"[+] Анализ файла: {source_input}")
+        # 2. Формируем папку проекта: output/<ИмяФайла>/
+        project_name = get_project_name(source_input)
+        project_output_dir = os.path.join(OUTPUT_BASE_DIR, project_name)
 
-        # 2. Создаем структуру папок
+        print(f"[+] Анализ файла: {source_input}")
+        print(f"[+] Папка назначения: {project_output_dir}/")
+
+        # Создаем структуру подпапок
         categories = ["Modules", "Sheets", "Forms", "Classes", "Other"]
         for cat in categories:
-            os.makedirs(os.path.join(OUTPUT_BASE_DIR, cat), exist_ok=True)
+            os.makedirs(os.path.join(project_output_dir, cat), exist_ok=True)
 
         vba_parser = VBA_Parser(file_path)
         if not vba_parser.detect_vba_macros():
@@ -97,7 +118,6 @@ def main() -> None:
             vba_filename,
             vba_code,
         ) in vba_parser.extract_macros():
-            # Принудительно гарантируем строковые типы для линтера
             clean_name: str = str(vba_filename or "module").replace("/", "_").replace("\\", "_")
             code_text: str = str(vba_code or "")
             
@@ -115,7 +135,7 @@ def main() -> None:
                 )
                 clean_name += ext
 
-            target_path: str = os.path.join(OUTPUT_BASE_DIR, mod_type, clean_name)
+            target_path: str = os.path.join(project_output_dir, mod_type, clean_name)
 
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(code_text)
@@ -129,15 +149,22 @@ def main() -> None:
 
         vba_parser.close()
 
-        # 4. Сохраняем сводку summary.txt
-        summary_file = os.path.join(OUTPUT_BASE_DIR, "summary.txt")
+        # 4. Удаляем пустые папки категорий (если, например, в файле нет форм или классов)
+        for cat in categories:
+            cat_dir = os.path.join(project_output_dir, cat)
+            if os.path.exists(cat_dir) and not os.listdir(cat_dir):
+                os.rmdir(cat_dir)
+
+        # 5. Сохраняем сводку summary.txt
+        summary_file = os.path.join(project_output_dir, "summary.txt")
         with open(summary_file, "w", encoding="utf-8") as f:
             f.write(f"Источник: {source_input}\n")
+            f.write(f"Папка проекта: {project_name}\n")
             f.write(f"Всего выгружено модулей: {count}\n\n")
             f.write("\n".join(summary))
 
         print(f"\n[✓] Успешно выгружено модулей: {count}")
-        print(f"[✓] Файлы сохранены в: {os.path.abspath(OUTPUT_BASE_DIR)}/")
+        print(f"[✓] Файлы проекта сохранены в: {os.path.abspath(project_output_dir)}/")
         print(f"[✓] Сводка: {os.path.abspath(summary_file)}")
 
     finally:
