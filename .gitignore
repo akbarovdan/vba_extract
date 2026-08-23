@@ -8,3 +8,10 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Folders
+output/
+
+# Excel files
+*.xl*
+~$*.xl*
